@@ -66,9 +66,9 @@ class tcp_connection : public boost::enable_shared_from_this<tcp_connection>
 			time_zone_db = tz_db;	
 		}
 		
-		void handle_write(const boost::system::error_code& /*error*/, size_t /*bytes_transfered*/)
+		void handle_write(const boost::system::error_code& error, size_t bytes_transfered)
 		{
-			socket_.wait(boost::asio::socket_base::wait_read);
+			
 		}
 
 		void handle_read(const boost::system::error_code& error, size_t bytes_transfered){
