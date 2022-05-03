@@ -1,0 +1,10 @@
+.vscode
+bin
+
+cmake-build-release
+CMakeFiles
+
+compile_commands.json
+Makefile
+CMakeCache.txt
+cmake_install.cmake
