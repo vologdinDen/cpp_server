@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.15)
-project(boost_project CXX)
+project(time_server CXX)
 
 set(THREADS_PREFER_PTHREAD_FLAG ON)
 find_package(Boost)
