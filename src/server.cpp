@@ -9,27 +9,31 @@
 
 #include <iostream>
 #include <vector>
+#include <algorithm>
 
-using namespace boost::local_time;
-using namespace boost::posix_time;
-using namespace boost::asio;
-using ip::tcp;
+namespace lt = boost::local_time;
+namespace pt = boost::posix_time;
+namespace ip_ = boost::asio::ip;
 using namespace std;
 
-local_date_time get_time(tz_database tz_db, string time_zone_name){
+string get_time(lt::tz_database tz_db, string time_zone_name){
+
+	stringstream stream_;
+	lt::local_time_facet* facet(new lt::local_time_facet("%a %b %e %T %z %Y"));
+
+	stream_.imbue(locale(locale::classic(), facet));
 
 	const vector<string>& all_timezones = tz_db.region_list();
-	ptime pt(second_clock::universal_time());
 
 	for (vector<string>::const_iterator tz = all_timezones.begin(); tz != all_timezones.end(); ++tz){
-		time_zone_ptr timeZone = tz_db.time_zone_from_region(*tz);
-		if (timeZone->dst_zone_abbrev() == time_zone_name){
-			local_date_time ldt = local_sec_clock::local_time(timeZone);
-			return ldt; 
+		lt::time_zone_ptr timeZone = tz_db.time_zone_from_region(*tz);
+		if (timeZone->std_zone_abbrev() == time_zone_name || timeZone->dst_zone_abbrev() == time_zone_name){
+			lt::local_date_time ldt = lt::local_sec_clock::local_time(timeZone);
+			stream_ << ldt;
+			return stream_.str() + '\n'; 
 		}
 	}
-	cout << "Input Error: There is no such time zone" << endl;
-	
+	return "Input Error: There is no such time zone\n";
 }
 
 class tcp_connection : public boost::enable_shared_from_this<tcp_connection>
@@ -38,53 +42,46 @@ class tcp_connection : public boost::enable_shared_from_this<tcp_connection>
 
 	typedef boost::shared_ptr<tcp_connection> pointer;
 
-	static pointer create(boost::asio::io_context& io_context, tz_database tz_db){
+	static pointer create(boost::asio::io_context& io_context, lt::tz_database tz_db){
 		return pointer(new tcp_connection(io_context, tz_db));
 	}
 
-	tcp::socket& socket(){
+	ip_::tcp::socket& socket(){
 		return socket_;
 	}
 
-	void start(){
-		socket_.async_read_some(boost::asio::buffer(data, max_length),
-		  boost::bind(&tcp_connection::handle_read, shared_from_this(),
-		    boost::asio::placeholders::error, boost::asio::placeholders::bytes_transferred));
+	void start(){		
+		socket_.async_write_some(boost::asio::buffer("Enter the time zone abbreviation, for example: BST\n"),
+		 boost::bind(&tcp_connection::handle_write, shared_from_this(),
+		  boost::asio::placeholders::error, boost::asio::placeholders::bytes_transferred));
+		
+		boost::asio::async_read_until(socket_, boost::asio::dynamic_buffer(message_), "\r\n", 
+		 boost::bind(&tcp_connection::handle_read, shared_from_this(),
+		  boost::asio::placeholders::error, boost::asio::placeholders::bytes_transferred));
 
-
-		// boost::asio::streambuf buf;
-		// boost::asio::async_read_until(socket_, buf, '\n', 
-		//  boost::bind(&tcp_connection::handle_read, shared_from_this(),
-		//   boost::asio::placeholders::error, boost::asio::placeholders::bytes_transferred));
 	}
 
 	private:
-		tcp_connection(boost::asio::io_context& io_context, tz_database tz_db) : socket_(io_context)
-		{
-			local_time_facet* facet(new local_time_facet("%a %b %e %T %z %Y"));
-			ss.imbue(locale(locale::classic(), facet));
+		tcp_connection(boost::asio::io_context& io_context, lt::tz_database tz_db) : socket_(io_context)
+		{	
 			time_zone_db = tz_db;	
 		}
 		
 		void handle_write(const boost::system::error_code& error, size_t bytes_transfered)
-		{
-			
+		{			
 		}
 
 		void handle_read(const boost::system::error_code& error, size_t bytes_transfered){
 			if (!error){
 				
-				cout << data << endl;
-				local_date_time ldt = get_time(time_zone_db, data);
-				cout << ldt << endl;
-				
-				ss << ldt << endl;
+				clean_message = message_.c_str();
+				clean_message.replace(clean_message.find("\r\n"), 64, "");
+				clean_message.erase(remove(clean_message.begin(), clean_message.end(), ' '), clean_message.end());
+				response = get_time(time_zone_db, clean_message);
 
-				socket_.async_write_some(boost::asio::buffer(ss.str()),
+				socket_.async_write_some(boost::asio::buffer(response),
 				  boost::bind(&tcp_connection::handle_write, shared_from_this(),
-			      boost::asio::placeholders::error, boost::asio::placeholders::bytes_transferred));
-				
-				// memset(&(data[0]), 0, max_length);
+			       boost::asio::placeholders::error, boost::asio::placeholders::bytes_transferred));
 				
 			}else{
 				cerr << "Error: " << error.what() << endl;
@@ -92,20 +89,25 @@ class tcp_connection : public boost::enable_shared_from_this<tcp_connection>
 			}
 		}
 
-		tz_database time_zone_db;
-		stringstream ss;
+		void handle_close(const boost::system::error_code& error, size_t bytes_transfered){
+			socket_.close();
+			delete this;
+		}
 
-		tcp::socket socket_;
+		lt::tz_database time_zone_db;
+
+		string clean_message;
+
+		ip_::tcp::socket socket_;
 		string message_;
-		enum {max_length = 3};
-		char data[max_length];
+		string response;
 };
 
 class tcp_server
 {
 	public:
 
-	tcp_server(boost::asio::io_context& io_context) : io_context_(io_context), acceptor_(io_context, tcp::endpoint(tcp::v4(), 1234))
+	tcp_server(boost::asio::io_context& io_context, int port) : io_context_(io_context), acceptor_(io_context, ip_::tcp::endpoint(ip_::tcp::v4(), port))
 	  {
 		tz_db.load_from_file("./date_time_zonespec.csv");
 		start_accept();
@@ -122,23 +124,28 @@ class tcp_server
 	void handle_accept(tcp_connection::pointer new_connection, const boost::system::error_code& error){
 		if (!error){
 			new_connection->start();
+			start_accept();
+		}else{
+			cout << error.message() << endl;
 		}
-		start_accept();
 	}
 
-	tz_database tz_db;
-	stringstream ss;
-
+	lt::tz_database tz_db;
 	boost::asio::io_context& io_context_;
-	tcp::acceptor acceptor_;
+	ip_::tcp::acceptor acceptor_;
 };
 
 
-int main(){
+int main(int argc, char* argv[]){
 
 	try{
+		if (argc != 2){
+			cerr << "The <PORT> parameter is not initalized" << endl;
+			return 0;
+		}
+
 		boost::asio::io_context io_context;
-		tcp_server server(io_context);
+		tcp_server server(io_context, atoi(argv[1]));
 		io_context.run();
 	}
 	catch (exception& e){
