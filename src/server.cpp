@@ -133,13 +133,6 @@ class tcp_server
 		tcp::acceptor acceptor_;
 };
 
-
-void handler(const boost::system::error_code& error, int signal_number){
-	if (!error){
-		std::cerr << signal_number << std::endl;
-	}
-}
-
 int main(int argc, char* argv[]){
 
 	try{
