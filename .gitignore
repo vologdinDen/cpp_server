@@ -1,5 +1,4 @@
 .vscode
-bin
 
 cmake-build-release
 CMakeFiles
